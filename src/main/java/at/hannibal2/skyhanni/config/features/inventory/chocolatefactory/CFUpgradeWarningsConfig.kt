@@ -11,7 +11,7 @@ class CFUpgradeWarningsConfig {
     @Expose
     @ConfigOption(
         name = "Upgrade Warning",
-        desc = "Chat notification when you have a chocolate factory upgrade available to purchase."
+        desc = "Chat notification when you have a chocolate factory upgrade available to purchase.",
     )
     @ConfigEditorBoolean
     @FeatureToggle
@@ -21,7 +21,7 @@ class CFUpgradeWarningsConfig {
     @ConfigOption(
         name = "Upgrade Warning Sound",
         desc = "Also play a sound when an upgrade is available.\n" +
-            "§eUpgrade warning must be turned on."
+            "§eUpgrade warning must be turned on.",
     )
     @ConfigEditorBoolean
     var upgradeWarningSound: Boolean = false
@@ -29,7 +29,7 @@ class CFUpgradeWarningsConfig {
     @Expose
     @ConfigOption(
         name = "Upgrade Warning Interval",
-        desc = "How often the warning an upgrade is available is repeated in minutes."
+        desc = "How often the warning an upgrade is available is repeated in minutes.",
     )
     @ConfigEditorSlider(minValue = 0f, maxValue = 10f, minStep = 0.25f)
     var timeBetweenWarnings: Float = 1f
@@ -37,8 +37,13 @@ class CFUpgradeWarningsConfig {
     @Expose
     @ConfigOption(
         name = "Include Time Tower",
-        desc = "Include Time Tower in the list of upgrades to be considered 'next best'."
+        desc = "Include Time Tower in the list of upgrades to be considered 'next best'.",
     )
     @ConfigEditorBoolean
     val upgradeWarningTimeTower: Property<Boolean> = Property.of(false)
+
+    @Expose
+    @ConfigOption(name = "Auto Upgrade", desc = "Automatically clicks if Upgrade is possible.")
+    @ConfigEditorBoolean
+    var autoUpgrade: Boolean = false
 }

@@ -29,7 +29,15 @@ import at.hannibal2.skyhanni.utils.SimpleTimeMark
 import at.hannibal2.skyhanni.utils.SoundUtils
 import at.hannibal2.skyhanni.utils.StringUtils.removeColor
 import at.hannibal2.skyhanni.utils.TimeUtils
+import at.hannibal2.skyhanni.utils.compat.MinecraftCompat
+import net.minecraft.client.Minecraft
 import net.minecraft.item.ItemStack
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+//#if MC > 1.21
+//$$ import net.minecraft.screen.slot.SlotActionType
+//#endif
 
 @SkyHanniModule
 object CFDataLoader {
@@ -583,5 +591,36 @@ object CFDataLoader {
 
         val affordAbleUpgrade = notMaxed.filter { it.canAfford() }.minByOrNull { it.effectiveCost ?: Double.MAX_VALUE }
         CFApi.bestAffordableSlot = affordAbleUpgrade?.getValidUpgradeIndex() ?: -1
+
+        if (config.chocolateUpgradeWarnings.autoUpgrade) {
+            //#if MC < 1.21
+            if (CFApi.bestAffordableSlot != -1) {
+                Executors.newSingleThreadScheduledExecutor().schedule({
+                    Minecraft.getMinecraft().playerController.windowClick(
+                        MinecraftCompat.localPlayer.openContainer.windowId, CFApi.bestAffordableSlot,
+                        1, 0, MinecraftCompat.localPlayer
+                    )
+                }, 1200, TimeUnit.MILLISECONDS,)
+            }
+            //#else
+            //$$ if (CFApi.bestAffordableSlot != -1) {
+            //$$     Executors.newSingleThreadScheduledExecutor().schedule({
+            //$$         val client = MinecraftClient.getInstance()
+            //$$         val player = client.player
+            //$$         val interactionManager = client.interactionManager
+            //$$
+            //$$         if (player != null && interactionManager != null && player.currentScreenHandler != null) {
+            //$$             interactionManager.clickSlot(
+            //$$                  player.currentScreenHandler.syncId,
+            //$$                  CFApi.bestAffordableSlot,
+            //$$                  0, // 0 für Linksklick (Standard zum Aufheben/Ablegen)
+            //$$                  SlotActionType.PICKUP, // WICHTIG: Verwende den Enum-Wert
+            //$$                  player
+            //$$              )
+            //$$         }
+            //$$     }, 1200, TimeUnit.MILLISECONDS)
+            //$$ }
+            //#endif
+        }
     }
 }

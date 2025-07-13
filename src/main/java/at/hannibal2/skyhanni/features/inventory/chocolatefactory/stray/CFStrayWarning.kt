@@ -20,6 +20,7 @@ import at.hannibal2.skyhanni.features.inventory.chocolatefactory.CFApi.specialRa
 import at.hannibal2.skyhanni.features.inventory.chocolatefactory.data.CFDataLoader.clickMeGoldenRabbitPattern
 import at.hannibal2.skyhanni.features.inventory.chocolatefactory.data.CFDataLoader.clickMeRabbitPattern
 import at.hannibal2.skyhanni.skyhannimodule.SkyHanniModule
+import at.hannibal2.skyhanni.utils.ChatUtils
 import at.hannibal2.skyhanni.utils.ColorUtils.toColor
 import at.hannibal2.skyhanni.utils.GuiRenderUtils
 import at.hannibal2.skyhanni.utils.InventoryUtils.getUpperItems
@@ -31,12 +32,20 @@ import at.hannibal2.skyhanni.utils.RenderUtils.highlight
 import at.hannibal2.skyhanni.utils.SimpleTimeMark
 import at.hannibal2.skyhanni.utils.SoundUtils
 import at.hannibal2.skyhanni.utils.compat.GuiScreenUtils
+import at.hannibal2.skyhanni.utils.compat.MinecraftCompat
 import io.github.notenoughupdates.moulconfig.ChromaColour
+import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.inventory.ContainerChest
 import net.minecraft.item.ItemStack
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.math.sin
 import kotlin.time.Duration.Companion.seconds
+
+//#if MC > 1.21
+//$$ import net.minecraft.screen.slot.SlotActionType
+//#endif
 
 @SkyHanniModule
 object CFStrayWarning {
@@ -131,6 +140,13 @@ object CFStrayWarning {
         strayStacks.forEach { handleRabbitWarnings(it.value) }
         val activeStrays = strayStacks.filterValues { !caughtRabbitPattern.matches(it.getSingleLineLore()) }
         activeStraySlots = activeStrays.keys
+        if (activeStraySlots.isNotEmpty() && config.rabbitWarning.strayClicker) {
+            ChatUtils.chat(activeStraySlots.toString())
+            activeStraySlots.forEach {
+                activeStraySlots.minus(it)
+                clickRabbitWarning(it)
+            }
+        }
         flashScreen = activeStrays.any {
             val stack = it.value
             when (config.rabbitWarning.flashScreenLevel) {
@@ -202,5 +218,41 @@ object CFStrayWarning {
         if (activeStraySlots.isEmpty()) return
         preventCloseTitle()
         event.cancel()
+    }
+
+    private fun clickRabbitWarning(slotIndex: Int) {
+
+        val time = (3000..4800).random().toLong()
+
+        //#if MC < 1.21
+        Executors.newSingleThreadScheduledExecutor().schedule({
+            Minecraft.getMinecraft().playerController.windowClick(
+                MinecraftCompat.localPlayer.openContainer.windowId, slotIndex, 2, 3, MinecraftCompat.localPlayer
+            )
+        }, time, TimeUnit.MILLISECONDS)
+        //#else
+        //$$ val client = MinecraftClient.getInstance()
+        //$$ val player = client.player
+        //$$ val interactionManager = client.interactionManager
+        //$$
+        //$$ if (player != null && interactionManager != null && player.currentScreenHandler != null) {
+        //$$     Executors.newSingleThreadScheduledExecutor().schedule({
+        //$$         // Sicherstellen, dass die Objekte zum Zeitpunkt der Ausführung (nach dem Delay) noch gültig sind
+        //$$         val currentClient = MinecraftClient.getInstance()
+        //$$         val currentPlayer = currentClient.player
+        //$$         val currentInteractionManager = currentClient.interactionManager
+        //$$
+        //$$         if (currentPlayer != null && currentInteractionManager != null && currentPlayer.currentScreenHandler != null) {
+        //$$             currentInteractionManager.clickSlot(
+        //$$                 currentPlayer.currentScreenHandler.syncId, // syncId des geöffneten Inventars
+        //$$                 slotIndex,                                 // Der zu klickende Slot-Index
+        //$$                 0,                                         // button: 0 = Linksklick, 1 = Rechtsklick, 2 = Mittelklick
+        //$$                 SlotActionType.PICKUP,                     // actionType: Definiert, was mit dem Item im Slot passieren soll
+        //$$                 currentPlayer                              // Der Spieler, der die Aktion ausführt
+        //$$             )
+        //$$         }
+        //$$     }, time, TimeUnit.MILLISECONDS)
+        //$$ }
+        //#endif
     }
 }

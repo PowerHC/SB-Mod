@@ -23,4 +23,10 @@ class ForagingMobHighlightConfig {
     @OnlyModern
     @Accordion
     var invisibug = InvisibugHighlightConfig()
+
+    @Expose
+    @ConfigOption(name = "Coralot Highlight", desc = "")
+    @OnlyModern
+    @Accordion
+    var coralot = CoralotHighlightConfig()
 }

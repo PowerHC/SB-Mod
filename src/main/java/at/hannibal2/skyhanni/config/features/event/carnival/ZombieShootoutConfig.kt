@@ -4,6 +4,7 @@ import at.hannibal2.skyhanni.config.FeatureToggle
 import at.hannibal2.skyhanni.config.core.config.Position
 import com.google.gson.annotations.Expose
 import io.github.notenoughupdates.moulconfig.annotations.ConfigEditorBoolean
+import io.github.notenoughupdates.moulconfig.annotations.ConfigEditorSlider
 import io.github.notenoughupdates.moulconfig.annotations.ConfigLink
 import io.github.notenoughupdates.moulconfig.annotations.ConfigOption
 
@@ -42,4 +43,14 @@ class ZombieShootoutConfig {
     @Expose
     @ConfigLink(owner = ZombieShootoutConfig::class, field = "lampTimer")
     val lampPosition: Position = Position(20, 20)
+
+    @Expose
+    @ConfigOption(name = "Auto Shoot", desc = "")
+    @ConfigEditorBoolean
+    var autoShoot: Boolean = true
+
+    @Expose
+    @ConfigOption(name = "Shooting Delay in ms", desc = "")
+    @ConfigEditorSlider(minValue = 100f, maxValue = 2000f, minStep = 100f)
+    var shootDelay: Int = 500
 }

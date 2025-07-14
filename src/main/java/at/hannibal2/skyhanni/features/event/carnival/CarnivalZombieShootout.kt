@@ -17,6 +17,7 @@ import at.hannibal2.skyhanni.utils.RenderUtils
 import at.hannibal2.skyhanni.utils.RenderUtils.renderRenderable
 import at.hannibal2.skyhanni.utils.SimpleTimeMark
 import at.hannibal2.skyhanni.utils.StringUtils.removeColor
+import at.hannibal2.skyhanni.utils.compat.MinecraftCompat
 import at.hannibal2.skyhanni.utils.compat.getEntityHelmet
 import at.hannibal2.skyhanni.utils.getLorenzVec
 import at.hannibal2.skyhanni.utils.render.WorldRenderUtils.draw3DLine
@@ -28,12 +29,21 @@ import at.hannibal2.skyhanni.utils.renderables.StringRenderable
 import at.hannibal2.skyhanni.utils.renderables.container.HorizontalContainerRenderable
 import at.hannibal2.skyhanni.utils.renderables.item.ItemStackRenderable
 import at.hannibal2.skyhanni.utils.repopatterns.RepoPattern
+import net.minecraft.client.Minecraft
+import net.minecraft.client.settings.KeyBinding
+import net.minecraft.entity.Entity
 import net.minecraft.entity.monster.EntityZombie
 import net.minecraft.init.Blocks
 import net.minecraft.init.Items
 import net.minecraft.item.Item
 import net.minecraft.item.ItemStack
+import net.minecraft.util.BlockPos
+import net.minecraft.util.MathHelper
 import java.awt.Color
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlin.math.atan2
+import kotlin.math.sqrt
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.DurationUnit
@@ -49,6 +59,17 @@ object CarnivalZombieShootout {
 
     private data class ShootoutLamp(var pos: LorenzVec, var time: SimpleTimeMark)
     private data class ShootoutZombie(val entity: EntityZombie, val type: ZombieType)
+
+    private var lastActionTime = 0L
+
+    private data class Target(val entity: Entity?, val lamp: ShootoutLamp?, val points: Int) {
+        fun isSameTarget(other: Target): Boolean {
+            return (this.entity != null && other.entity != null && this.entity.entityId == other.entity.entityId) ||
+                (this.lamp != null && other.lamp != null && this.lamp.pos == other.lamp.pos)
+        }
+    }
+
+    private var targetQueue = mutableListOf<Target>()
 
     private var content = HorizontalContainerRenderable(listOf())
     private var drawZombies = listOf<ShootoutZombie>()
@@ -204,8 +225,36 @@ object CarnivalZombieShootout {
 
     @HandleEvent
     fun onTick(event: SkyHanniTickEvent) {
-        if (!isEnabled() || (!config.coloredHitboxes && !config.zombieTimer && !config.lampTimer) || !event.isMod(2)) return
+        // Handle preconditions and queue clearing
+        handleTickPreconditions()
 
+        // Check if main logic should be skipped based on module/feature state or tick type
+        val moduleDisabled = !isEnabled()
+        val allVisualOrAutoShootFeaturesOff = !config.coloredHitboxes && !config.zombieTimer && !config.lampTimer && !config.autoShoot
+        val notModTick = !event.isMod(2)
+
+        if (moduleDisabled || allVisualOrAutoShootFeaturesOff || notModTick) {
+            return // Exit early if conditions are not met for the main logic
+        }
+
+        // Update features that run on mod ticks
+        updateVisualFeatures()
+
+        // Handle auto-shoot logic if enabled
+        if (config.autoShoot) {
+            handleAutoShootLogic()
+        }
+    }
+
+    private fun handleTickPreconditions() {
+        // This must run every tick regardless of event.isMod(2) to ensure targetQueue is cleared
+        // immediately when autoShoot is disabled, or module/event state changes.
+        if (!isEnabled() || !started || !config.autoShoot) {
+            targetQueue.clear()
+        }
+    }
+
+    private fun updateVisualFeatures() {
         if (config.coloredHitboxes || config.zombieTimer) {
             updateZombies()
         }
@@ -217,9 +266,95 @@ object CarnivalZombieShootout {
         }
     }
 
+    private fun handleAutoShootLogic() {
+        val currentTime = System.currentTimeMillis()
+
+        val currentTargets = fetchAndFilterTargets()
+        updateTargetQueue(currentTargets) // Add new targets and remove invalid ones
+
+        targetQueue.sortByDescending { it.points } // Sort by points (highest first)
+
+        val target = targetQueue.firstOrNull()
+        if (target != null) {
+            processTarget(target, currentTime)
+        }
+    }
+
+    private fun fetchAndFilterTargets(): MutableList<Target> {
+        val currentTargets = mutableListOf<Target>()
+
+        // Find and add nearby zombies
+        val nearbyZombies = EntityUtils.getEntitiesNextToPlayer<EntityZombie>(30.0).mapNotNull { zombie ->
+            if (zombie.health <= 0) return@mapNotNull null
+            val helmet = zombie.getEntityHelmet() ?: return@mapNotNull null
+            val type = toType(helmet) ?: return@mapNotNull null
+            Target(entity = zombie, lamp = null, points = type.points)
+        }
+        currentTargets.addAll(nearbyZombies)
+
+        // Add lamp if present and active
+        lamp?.let { currentLamp ->
+            if (isLampActive(currentLamp)) {
+                currentTargets.add(Target(entity = null, lamp = currentLamp, points = 100))
+            } else {
+                lamp = null // Lamp is no longer active, reset it
+            }
+        }
+        return currentTargets
+    }
+
+    private fun updateTargetQueue(newTargets: MutableList<Target>) {
+        // Add new targets to targetQueue if they aren't already present
+        for (target in newTargets) {
+            if (!targetQueue.any { it.isSameTarget(target) }) {
+                targetQueue.add(target)
+            }
+        }
+
+        // Remove invalid targets from targetQueue
+        targetQueue = targetQueue.filter { target ->
+            if (target.entity != null) {
+                //#if MC < 1.21
+                target.entity.isEntityAlive
+                //#else
+                //$$ target.entity.isAlive
+                //#endif
+            } else if (target.lamp != null) {
+                isLampActive(target.lamp)
+            } else {
+                false
+            }
+        }.toMutableList()
+    }
+
+    private fun processTarget(target: Target, currentTime: Long) {
+        //#if MC < 1.21
+        val isValidTarget = (target.entity != null && target.entity.isEntityAlive) ||
+            (target.lamp != null && isLampActive(target.lamp))
+        //#else
+        //$$ val isValidTarget = (target.entity != null && target.entity.isAlive) ||
+        //$$     (target.lamp != null && isLampActive(target.lamp))
+        //#endif
+
+        if (isValidTarget) {
+            if (currentTime - lastActionTime >= config.shootDelay) {
+                if (target.entity != null) {
+                    aimAtEntity(target.entity)
+                } else if (target.lamp != null) {
+                    aimAtLamp(target.lamp)
+                }
+                lastActionTime = currentTime
+            }
+        } else {
+            targetQueue.remove(target) // Target is invalid, remove it
+        }
+    }
+
+    // --- Existing Helper Functions ---
+
     private fun updateZombies() {
         val nearbyZombies = getZombies()
-        maxType = nearbyZombies.maxBy { it.type.points }.type
+        maxType = nearbyZombies.maxByOrNull { it.type.points }?.type ?: ZombieType.LEATHER
         val maxZombies = nearbyZombies.filter { it.type == maxType }
 
         drawZombies = when {
@@ -282,4 +417,136 @@ object CarnivalZombieShootout {
     private fun toType(item: ItemStack) = ZombieType.entries.find { it.helmet == item.item }
 
     private fun isEnabled() = config.enabled && HypixelData.skyBlockArea == "Carnival" && started
+
+    private fun isLampActive(lamp: ShootoutLamp): Boolean {
+        //#if MC < 1.21
+        val world = MinecraftCompat.localWorld
+        val blockPos = BlockPos(lamp.pos.x, lamp.pos.y, lamp.pos.z)
+        //#else
+        //$$ val world = MinecraftClient.getInstance().world ?: return false
+        //$$ val blockPos = BlockPos(lamp.pos.x.toInt(), lamp.pos.y.toInt(), lamp.pos.z.toInt())
+        //#endif
+
+        val blockState = world.getBlockState(blockPos)
+        val block = blockState.block
+
+        //#if MC < 1.21
+        return block == Blocks.lit_redstone_lamp
+        //#else
+        //$$ return block == Blocks.REDSTONE_LAMP && blockState.get(Properties.LIT)
+        //#endif
+    }
+
+    private fun aimAtEntity(entity: Entity) {
+        val player = MinecraftCompat.localPlayer ?: return
+        if (player.worldObj == null) return
+
+        val zombiePosX = entity.posX
+        val zombiePosY = entity.posY + entity.eyeHeight
+        val zombiePosZ = entity.posZ
+
+        val motionX = entity.motionX
+        val motionZ = entity.motionZ
+
+        val adjustmentFactor = 10
+        val adjustedPosX = zombiePosX + motionX * adjustmentFactor
+        val adjustedPosZ = zombiePosZ + motionZ * adjustmentFactor
+
+        val deltaX = adjustedPosX - player.posX
+        var deltaY = zombiePosY - (player.posY + player.eyeHeight)
+        val deltaZ = adjustedPosZ - player.posZ
+
+        if (entity is EntityZombie && entity.isChild) {
+            deltaY += 0.5
+        }
+
+        val distanceXZ = sqrt(deltaX * deltaX + deltaZ * deltaZ)
+        val targetYaw = Math.toDegrees(atan2(deltaZ, deltaX)) - 90
+        val targetPitch = -Math.toDegrees(atan2(deltaY, distanceXZ))
+
+        //#if MC < 1.21
+        val yawDifference = MathHelper.wrapAngleTo180_float((targetYaw - player.rotationYaw).toFloat())
+        //#else
+        //$$ val yawDifference = MathHelper.wrapDegrees((targetYaw - player.yaw).toFloat())
+        //#endif
+        val pitchDifference = (targetPitch - player.rotationPitch).toFloat()
+
+        val maxYawRotation = 25.0f
+        val maxPitchRotation = 25.0f
+
+        if (Math.abs(yawDifference) > maxYawRotation) {
+            player.rotationYaw += if (yawDifference > 0) maxYawRotation else -maxYawRotation
+        } else {
+            player.rotationYaw += yawDifference
+        }
+
+        if (Math.abs(pitchDifference) > maxPitchRotation) {
+            player.rotationPitch += if (pitchDifference > 0) maxPitchRotation else -maxPitchRotation
+        } else {
+            player.rotationPitch += pitchDifference
+        }
+
+        //#if MC < 1.21
+        Executors.newSingleThreadScheduledExecutor().schedule({
+            KeyBinding.onTick(Minecraft.getMinecraft().gameSettings.keyBindUseItem.keyCode)
+        }, 50, TimeUnit.MILLISECONDS)
+        //#else
+        //$$ Executors.newSingleThreadScheduledExecutor().schedule({
+        //$$     val useItemKeyBinding = MinecraftClient.getInstance().options.useKey
+        //$$     KeyBinding.setKeyPressed(useItemKeyBinding.boundKey, true)
+        //$$     KeyBinding.setKeyPressed(useItemKeyBinding.boundKey, false)
+        //$$ }, 50, TimeUnit.MILLISECONDS)
+        //#endif
+    }
+
+    private fun aimAtLamp(lamp: ShootoutLamp) {
+        val player = MinecraftCompat.localPlayer ?: return
+        if (player.worldObj == null) return
+
+        val lampPosX = lamp.pos.x + 0.5
+        val lampPosY = lamp.pos.y + 0.5
+        val lampPosZ = lamp.pos.z + 0.5
+
+        val deltaX = lampPosX - player.posX
+        val deltaY = lampPosY - (player.posY + player.getEyeHeight()) + 1
+        val deltaZ = lampPosZ - player.posZ
+
+        val distanceXZ = sqrt(deltaX * deltaX + deltaZ * deltaZ)
+        val targetYaw = Math.toDegrees(atan2(deltaZ, deltaX)) - 90
+        val targetPitch = -Math.toDegrees(atan2(deltaY, distanceXZ))
+
+        //#if MC < 1.21
+        val yawDifference = MathHelper.wrapAngleTo180_float((targetYaw - player.rotationYaw).toFloat())
+        //#else
+        //$$ val yawDifference = MathHelper.wrapDegrees((targetYaw - player.yaw).toFloat())
+        //#endif
+        val pitchDifference = (targetPitch - player.rotationPitch).toFloat()
+
+        val maxYawRotation = 20.0f
+        val maxPitchRotation = 20.0f
+
+        if (Math.abs(yawDifference) > maxYawRotation) {
+            player.rotationYaw += if (yawDifference > 0) maxYawRotation else -maxYawRotation
+        } else {
+            player.rotationYaw += yawDifference
+        }
+
+        if (Math.abs(pitchDifference) > maxPitchRotation) {
+            player.rotationPitch += if (pitchDifference > 0) maxPitchRotation else -maxPitchRotation
+        } else {
+            player.rotationPitch += pitchDifference
+        }
+
+        //#if MC < 1.21
+        Executors.newSingleThreadScheduledExecutor().schedule({
+            KeyBinding.onTick(Minecraft.getMinecraft().gameSettings.keyBindUseItem.keyCode)
+        }, 50, TimeUnit.MILLISECONDS)
+        //#else
+        //$$ Executors.newSingleThreadScheduledExecutor().schedule({
+        //$$     val useItemKeyBinding = MinecraftClient.getInstance().options.useKey
+        //$$     KeyBinding.setKeyPressed(useItemKeyBinding.boundKey, true)
+        //$$     KeyBinding.setKeyPressed(useItemKeyBinding.boundKey, false)
+        //$$ }, 50, TimeUnit.MILLISECONDS)
+        //#endif
+    }
 }
